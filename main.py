@@ -12,44 +12,54 @@ from reportlab.lib.utils import ImageReader
 rectangles = []
 start_point = None
 drawing = False
+images_with_rois = []
+img_copy = None
+img_copy_prev = None
+tk_image = None
 
 def draw_grid(c, page_width, page_height, grid_size_mm=5):
     grid_size = grid_size_mm * mm
     c.setStrokeColorRGB(0.8, 0.8, 0.8)
     c.setLineWidth(0.3)
-
-    x = 0
-    while x <= page_width:
+    for x in np.arange(0, page_width, grid_size):
         c.line(x, 0, x, page_height)
-        x += grid_size
-
-    y = 0
-    while y <= page_height:
+    for y in np.arange(0, page_height, grid_size):
         c.line(0, y, page_width, y)
-        y += grid_size
 
-def create_pdf_with_tasks(task_images, pdf_filename):
+def create_pdf_with_tasks(images_with_rois, pdf_filename, title_text):
     c = canvas.Canvas(pdf_filename, pagesize=A4)
     width, height = A4
 
-    for img_np in task_images:
-        draw_grid(c, width, height, grid_size_mm=5)
+    for img_np, rects in images_with_rois:
+        for start, end in rects:
+            x1, y1 = map(int, start)
+            x2, y2 = map(int, end)
+            x_min, x_max = sorted([x1, x2])
+            y_min, y_max = sorted([y1, y2])
+            roi = img_np[y_min:y_max, x_min:x_max]
 
-        is_success, buffer = cv2.imencode(".jpg", img_np)
-        if not is_success:
-            continue
-        img_bytes = io.BytesIO(buffer)
-        img_reader = ImageReader(img_bytes)
-        iw, ih = img_reader.getSize()
+            draw_grid(c, width, height, grid_size_mm=5)
 
-        scale = min(width / iw, height / ih) * 0.9
-        iw_scaled, ih_scaled = iw * scale, ih * scale
+            is_success, buffer = cv2.imencode(".jpg", roi)
+            if not is_success:
+                continue
+            img_bytes = io.BytesIO(buffer)
+            img_reader = ImageReader(img_bytes)
+            iw, ih = img_reader.getSize()
 
-        x = (width - iw_scaled) / 2
-        y = height - ih_scaled - 20  # na górze strony
+            scale = min(width / iw, height / ih) * 0.9
+            iw_scaled, ih_scaled = iw * scale, ih * scale
+            x = (width - iw_scaled) / 2
+            y = height - ih_scaled - 20
 
-        c.drawImage(img_reader, x, y, width=iw_scaled, height=ih_scaled)
-        c.showPage()
+            c.drawImage(img_reader, x, y, width=iw_scaled, height=ih_scaled)
+
+            # Dodaj tytuł na dole
+            if title_text:
+                c.setFont("Helvetica", 11)
+                c.drawCentredString(width / 2, 15, title_text)
+
+            c.showPage()
 
     c.save()
 
@@ -81,6 +91,8 @@ def _on_shift_mousewheel(event):
     canvas_widget.xview_scroll(int(-1 * (event.delta / 120)), "units")
 
 def choose_file():
+    global rectangles, img_copy, tk_image, img_copy_prev
+
     file_path = filedialog.askopenfilename(title="Wybierz obraz", filetypes=[("Obrazy", "*.jpg *.png *.bmp")])
     if not file_path:
         return
@@ -93,39 +105,41 @@ def choose_file():
     image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
     pil_image = Image.fromarray(image_rgb)
 
-    global tk_image, canvas_widget, img_copy
+    # Zapisz poprzednie zaznaczenia
+    if rectangles and img_copy_prev is not None:
+        images_with_rois.append((img_copy_prev, rectangles.copy()))
+
+    rectangles.clear()
+
     img_copy = image
+    img_copy_prev = image
     tk_image = ImageTk.PhotoImage(pil_image)
 
+    canvas_widget.delete("all")
     canvas_widget.create_image(0, 0, image=tk_image, anchor="nw")
     canvas_widget.config(scrollregion=canvas_widget.bbox("all"))
 
 def save_pdf():
-    if not rectangles:
-        print("Brak zaznaczonych prostokątów!")
-        return
+    global img_copy_prev
 
-    task_images = []
-    for start, end in rectangles:
-        x1, y1 = map(int, start)
-        x2, y2 = map(int, end)
-        x_min, x_max = sorted([x1, x2])
-        y_min, y_max = sorted([y1, y2])
-        roi = img_copy[y_min:y_max, x_min:x_max]
-        task_images.append(roi)
+    if rectangles and img_copy_prev is not None:
+        images_with_rois.append((img_copy_prev, rectangles.copy()))
+
+    if not images_with_rois:
+        print("Brak zaznaczonych zadań.")
+        return
 
     pdf_path = filedialog.asksaveasfilename(defaultextension=".pdf", filetypes=[("PDF", "*.pdf")])
     if pdf_path:
-        create_pdf_with_tasks(task_images, pdf_path)
+        title_text = title_entry.get()
+        create_pdf_with_tasks(images_with_rois, pdf_path, title_text)
         print(f"Zapisano PDF: {pdf_path}")
-
 
 def on_ctrl_z(event):
     if rectangles:
-        rectangles.pop()               # usuwamy ostatni prostokąt
-        canvas_widget.delete("all")   # czyścimy canvas
-        canvas_widget.create_image(0, 0, image=tk_image, anchor="nw")  # wklejamy obraz
-        # rysujemy pozostałe prostokąty
+        rectangles.pop()
+        canvas_widget.delete("all")
+        canvas_widget.create_image(0, 0, image=tk_image, anchor="nw")
         for start, end in rectangles:
             canvas_widget.create_rectangle(*start, *end, outline='green', width=2)
 
@@ -148,20 +162,21 @@ scrollbar_x = tk.Scrollbar(root, orient=tk.HORIZONTAL, command=canvas_widget.xvi
 scrollbar_x.pack(side=tk.BOTTOM, fill=tk.X)
 canvas_widget.config(xscrollcommand=scrollbar_x.set)
 
-# Bindy myszy
 canvas_widget.bind("<ButtonPress-1>", on_mouse_down)
 canvas_widget.bind("<B1-Motion>", on_mouse_move)
 canvas_widget.bind("<ButtonRelease-1>", on_mouse_up)
 canvas_widget.bind_all("<MouseWheel>", _on_mousewheel)
 canvas_widget.bind_all("<Shift-MouseWheel>", _on_shift_mousewheel)
 
-
-
-# Przyciski
+# === Panel przycisków ===
 btn_frame = tk.Frame(root)
 btn_frame.pack(pady=10)
 
 tk.Button(btn_frame, text="Wczytaj obraz", command=choose_file).pack(side=tk.LEFT, padx=5)
 tk.Button(btn_frame, text="Zapisz PDF", command=save_pdf).pack(side=tk.LEFT, padx=5)
+
+tk.Label(btn_frame, text="Tytuł PDF (na dole każdej strony):").pack(side=tk.LEFT, padx=5)
+title_entry = tk.Entry(btn_frame, width=30)
+title_entry.pack(side=tk.LEFT)
 
 root.mainloop()
