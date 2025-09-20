@@ -29,6 +29,9 @@ def draw_grid(c, page_width, page_height, grid_size_mm=5):
 def create_pdf_with_tasks(images_with_rois, pdf_filename, title_text):
     c = canvas.Canvas(pdf_filename, pagesize=A4)
     width, height = A4
+    # Oblicz całkowitą liczbę stron
+    total_pages = sum(len(rects) for _, rects in images_with_rois)
+    page_num = 1
 
     for img_np, rects in images_with_rois:
         for start, end in rects:
@@ -50,7 +53,7 @@ def create_pdf_with_tasks(images_with_rois, pdf_filename, title_text):
             scale = min(width / iw, height / ih) * 0.9
             iw_scaled, ih_scaled = iw * scale, ih * scale
             x = (width - iw_scaled) / 2
-            y = height - ih_scaled - 20
+            y = height - ih_scaled - 40
 
             c.drawImage(img_reader, x, y, width=iw_scaled, height=ih_scaled)
 
@@ -59,6 +62,11 @@ def create_pdf_with_tasks(images_with_rois, pdf_filename, title_text):
                 c.setFont("Helvetica", 11)
                 c.drawCentredString(width / 2, 15, title_text)
 
+            # Numeracja stron w stylu "Strona X z Y"
+            c.setFont("Helvetica", 10)
+            c.drawRightString(width - 20, 10, f"{page_num}/{total_pages}")
+
+            page_num += 1
             c.showPage()
 
     c.save()
