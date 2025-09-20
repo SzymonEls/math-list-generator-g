@@ -8,6 +8,21 @@ from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.units import mm
 from reportlab.lib.utils import ImageReader
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
+import os
+
+# Ścieżka do czcionki w katalogu skryptu
+font_path = os.path.join(os.path.dirname(__file__), "DejaVuSans.ttf")
+
+if not os.path.exists(font_path):
+    raise FileNotFoundError(
+        "Brak pliku czcionki 'DejaVuSans.ttf'. Pobierz ją np. z https://dejavu-fonts.github.io/ i umieść w katalogu skryptu."
+    )
+
+# Rejestracja czcionki
+pdfmetrics.registerFont(TTFont('DejaVu', font_path))
+
 
 rectangles = []
 start_point = None
@@ -59,11 +74,11 @@ def create_pdf_with_tasks(images_with_rois, pdf_filename, title_text):
 
             # Dodaj tytuł na dole
             if title_text:
-                c.setFont("Helvetica", 11)
+                c.setFont("DejaVu", 11)
                 c.drawCentredString(width / 2, 15, title_text)
 
             # Numeracja stron w stylu "Strona X z Y"
-            c.setFont("Helvetica", 10)
+            c.setFont("DejaVu", 10)
             c.drawRightString(width - 20, 10, f"{page_num}/{total_pages}")
 
             page_num += 1
@@ -105,9 +120,12 @@ def choose_file():
     if not file_path:
         return
 
-    image = cv2.imread(file_path)
-    if image is None:
-        print("Nie można otworzyć obrazu.")
+    # Wczytanie obrazu z obsługą ścieżek Unicode
+    try:
+        img_array = np.fromfile(file_path, dtype=np.uint8)
+        image = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
+    except Exception as e:
+        print(f"Błąd odczytu obrazu: {e}")
         return
 
     image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
