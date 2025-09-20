@@ -171,7 +171,7 @@ def on_ctrl_z(event):
 
 # === GUI ===
 root = tk.Tk()
-root.title("Zaznaczanie zadań do PDF")
+root.title("Zaznaczanie zadań do PDF (polskie znaki w ścieżce i info)")
 frame = tk.Frame(root)
 frame.pack(fill=tk.BOTH, expand=True)
 
