@@ -10,7 +10,14 @@ from reportlab.lib.units import mm
 from reportlab.lib.utils import ImageReader
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
+from pdf2image import convert_from_path
 import os
+
+#pdf
+pdf_pages = []  # Lista PIL.Image dla każdej strony PDF
+pdf_rectangles = []  # Lista list prostokątów per strona
+current_page = 0
+is_pdf_mode = False
 
 # Ścieżka do czcionki w katalogu skryptu
 font_path = os.path.join(os.path.dirname(__file__), "DejaVuSans.ttf")
@@ -100,6 +107,9 @@ def on_mouse_up(event):
     canvas_widget.create_rectangle(*start_point, *end_point, outline='green', width=2)
     drawing = False
 
+    if is_pdf_mode:
+        pdf_rectangles[current_page] = rectangles.copy()
+
 def on_mouse_move(event):
     global drawing
     if drawing:
@@ -112,6 +122,44 @@ def _on_mousewheel(event):
 
 def _on_shift_mousewheel(event):
     canvas_widget.xview_scroll(int(-1 * (event.delta / 120)), "units")
+
+def show_pdf_page():
+    global tk_image, img_copy, rectangles
+
+    pil_image = pdf_pages[current_page]
+    img_copy = cv2.cvtColor(np.array(pil_image), cv2.COLOR_RGB2BGR)
+    rectangles = pdf_rectangles[current_page]
+
+    tk_image = ImageTk.PhotoImage(pil_image)
+    canvas_widget.delete("all")
+    canvas_widget.create_image(0, 0, image=tk_image, anchor="nw")
+    canvas_widget.config(scrollregion=canvas_widget.bbox("all"))
+
+    # Rysuj prostokąty z tej strony
+    for start, end in rectangles:
+        canvas_widget.create_rectangle(*start, *end, outline='green', width=2)
+
+
+def choose_pdf():
+    global pdf_pages, current_page, is_pdf_mode, rectangles, img_copy, tk_image, pdf_rectangles
+
+    file_path = filedialog.askopenfilename(title="Wybierz PDF", filetypes=[("PDF files", "*.pdf")])
+    if not file_path:
+        return
+
+    try:
+        pdf_pages = convert_from_path(file_path, dpi=200)
+    except Exception as e:
+        print(f"Błąd odczytu PDF: {e}")
+        return
+
+    is_pdf_mode = True
+    pdf_rectangles = [[] for _ in pdf_pages]
+    current_page = 0
+    rectangles = pdf_rectangles[current_page]
+
+    show_pdf_page()
+
 
 def choose_file():
     global rectangles, img_copy, tk_image, img_copy_prev
@@ -147,9 +195,17 @@ def choose_file():
 
 def save_pdf():
     global img_copy_prev
-
-    if rectangles and img_copy_prev is not None:
-        images_with_rois.append((img_copy_prev, rectangles.copy()))
+    
+    if is_pdf_mode:
+        images_with_rois.clear()
+        for i, page_img in enumerate(pdf_pages):
+            img_np = cv2.cvtColor(np.array(page_img), cv2.COLOR_RGB2BGR)
+            rects = pdf_rectangles[i]
+            if rects:
+                images_with_rois.append((img_np, rects.copy()))
+    else:
+        if rectangles and img_copy_prev is not None:
+            images_with_rois.append((img_copy_prev, rectangles.copy()))
 
     if not images_with_rois:
         print("Brak zaznaczonych zadań.")
@@ -168,6 +224,21 @@ def on_ctrl_z(event):
         canvas_widget.create_image(0, 0, image=tk_image, anchor="nw")
         for start, end in rectangles:
             canvas_widget.create_rectangle(*start, *end, outline='green', width=2)
+
+def prev_page():
+    global current_page
+    if not is_pdf_mode or current_page == 0:
+        return
+    current_page -= 1
+    show_pdf_page()
+
+def next_page():
+    global current_page
+    if not is_pdf_mode or current_page >= len(pdf_pages) - 1:
+        return
+    current_page += 1
+    show_pdf_page()
+
 
 # === GUI ===
 root = tk.Tk()
@@ -199,6 +270,10 @@ btn_frame = tk.Frame(root)
 btn_frame.pack(pady=10)
 
 tk.Button(btn_frame, text="Wczytaj obraz", command=choose_file).pack(side=tk.LEFT, padx=5)
+tk.Button(btn_frame, text="Wczytaj PDF", command=choose_pdf).pack(side=tk.LEFT, padx=5)
+tk.Button(btn_frame, text="←", command=prev_page).pack(side=tk.LEFT, padx=2)
+tk.Button(btn_frame, text="→", command=next_page).pack(side=tk.LEFT, padx=2)
+
 tk.Button(btn_frame, text="Zapisz PDF", command=save_pdf).pack(side=tk.LEFT, padx=5)
 
 tk.Label(btn_frame, text="Tytuł PDF (na dole każdej strony):").pack(side=tk.LEFT, padx=5)
