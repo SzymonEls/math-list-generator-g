@@ -1,0 +1,2 @@
+- install Poppler
+- pip install pdf2image
