@@ -2,6 +2,9 @@ import cv2
 import numpy as np
 import io
 import tkinter as tk
+from tkinter import ttk
+import threading
+import queue
 from tkinter import filedialog
 from PIL import Image, ImageTk
 from reportlab.pdfgen import canvas
@@ -10,7 +13,7 @@ from reportlab.lib.units import mm
 from reportlab.lib.utils import ImageReader
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
-from pdf2image import convert_from_path
+from pdf2image import convert_from_path, pdfinfo_from_path
 import os
 
 #pdf
@@ -18,6 +21,10 @@ pdf_pages = []  # Lista PIL.Image dla każdej strony PDF
 pdf_rectangles = []  # Lista list prostokątów per strona
 current_page = 0
 is_pdf_mode = False
+pdf_load_queue = queue.Queue()
+pdf_load_in_progress = False
+pdf_load_total = 0
+pdf_load_thread = None
 
 # Ścieżka do czcionki w katalogu skryptu
 font_path = os.path.join(os.path.dirname(__file__), "DejaVuSans.ttf")
@@ -275,26 +282,90 @@ def show_pdf_page():
     for start, end in rectangles:
         canvas_widget.create_rectangle(*start, *end, outline='green', width=2)
 
+def set_loading_state(is_loading):
+    state = tk.DISABLED if is_loading else tk.NORMAL
+    load_image_button.config(state=state)
+    load_pdf_button.config(state=state)
+    prev_page_button.config(state=state)
+    next_page_button.config(state=state)
+    save_pdf_button.config(state=state)
+    if is_loading:
+        progress_label.config(text="Wczytywanie PDF...")
+    else:
+        progress_label.config(text="")
+
+def process_pdf_queue():
+    global pdf_pages, current_page, is_pdf_mode, rectangles, pdf_rectangles, pdf_load_in_progress
+    try:
+        while True:
+            message = pdf_load_queue.get_nowait()
+            message_type = message.get("type")
+            if message_type == "progress":
+                total = message.get("total", 0)
+                current = message.get("current", 0)
+                if total:
+                    progress_bar.stop()
+                    progress_bar.config(mode="determinate", maximum=total)
+                    progress_var.set(current)
+                    progress_label.config(text=f"Wczytywanie PDF: {current}/{total}")
+            elif message_type == "done":
+                pdf_pages = message.get("pages", [])
+                if not pdf_pages:
+                    progress_label.config(text="Nie udało się wczytać PDF.")
+                else:
+                    is_pdf_mode = True
+                    pdf_rectangles = [[] for _ in pdf_pages]
+                    current_page = 0
+                    rectangles = pdf_rectangles[current_page]
+                    show_pdf_page()
+                pdf_load_in_progress = False
+                set_loading_state(False)
+                progress_bar.stop()
+                progress_var.set(0)
+            elif message_type == "error":
+                progress_label.config(text=f"Błąd odczytu PDF: {message.get('error', '')}")
+                pdf_load_in_progress = False
+                set_loading_state(False)
+                progress_bar.stop()
+                progress_var.set(0)
+    except queue.Empty:
+        pass
+
+    if pdf_load_in_progress:
+        root.after(100, process_pdf_queue)
+
+def load_pdf_worker(file_path, dpi=200):
+    try:
+        info = pdfinfo_from_path(file_path)
+        total_pages = int(info.get("Pages", 0))
+        pages = []
+        for page_num in range(1, total_pages + 1):
+            images = convert_from_path(file_path, dpi=dpi, first_page=page_num, last_page=page_num)
+            if images:
+                pages.append(images[0])
+            pdf_load_queue.put({"type": "progress", "current": page_num, "total": total_pages})
+        pdf_load_queue.put({"type": "done", "pages": pages})
+    except Exception as e:
+        pdf_load_queue.put({"type": "error", "error": str(e)})
 
 def choose_pdf():
-    global pdf_pages, current_page, is_pdf_mode, rectangles, img_copy, tk_image, pdf_rectangles
+    global pdf_load_in_progress, pdf_load_thread, pdf_load_total
 
     file_path = filedialog.askopenfilename(title="Wybierz PDF", filetypes=[("PDF files", "*.pdf")])
     if not file_path:
         return
 
-    try:
-        pdf_pages = convert_from_path(file_path, dpi=200)
-    except Exception as e:
-        print(f"Błąd odczytu PDF: {e}")
+    if pdf_load_in_progress:
         return
 
-    is_pdf_mode = True
-    pdf_rectangles = [[] for _ in pdf_pages]
-    current_page = 0
-    rectangles = pdf_rectangles[current_page]
-
-    show_pdf_page()
+    pdf_load_in_progress = True
+    set_loading_state(True)
+    progress_var.set(0)
+    progress_bar.config(mode="indeterminate")
+    progress_bar.start(10)
+    pdf_load_thread = threading.Thread(target=load_pdf_worker, args=(file_path,), daemon=True)
+    pdf_load_thread.start()
+    root.after(100, process_pdf_queue)
 
 
 def choose_file():
@@ -426,15 +497,28 @@ preview_label.pack()
 btn_frame = tk.Frame(root)
 btn_frame.pack(pady=10)
 
-tk.Button(btn_frame, text="Wczytaj obraz", command=choose_file).pack(side=tk.LEFT, padx=5)
-tk.Button(btn_frame, text="Wczytaj PDF", command=choose_pdf).pack(side=tk.LEFT, padx=5)
-tk.Button(btn_frame, text="←", command=prev_page).pack(side=tk.LEFT, padx=2)
-tk.Button(btn_frame, text="→", command=next_page).pack(side=tk.LEFT, padx=2)
+load_image_button = tk.Button(btn_frame, text="Wczytaj obraz", command=choose_file)
+load_image_button.pack(side=tk.LEFT, padx=5)
+load_pdf_button = tk.Button(btn_frame, text="Wczytaj PDF", command=choose_pdf)
+load_pdf_button.pack(side=tk.LEFT, padx=5)
+prev_page_button = tk.Button(btn_frame, text="←", command=prev_page)
+prev_page_button.pack(side=tk.LEFT, padx=2)
+next_page_button = tk.Button(btn_frame, text="→", command=next_page)
+next_page_button.pack(side=tk.LEFT, padx=2)
 
-tk.Button(btn_frame, text="Zapisz PDF", command=save_pdf).pack(side=tk.LEFT, padx=5)
+save_pdf_button = tk.Button(btn_frame, text="Zapisz PDF", command=save_pdf)
+save_pdf_button.pack(side=tk.LEFT, padx=5)
 
 tk.Label(btn_frame, text="Tytuł PDF (na dole każdej strony):").pack(side=tk.LEFT, padx=5)
 title_entry = tk.Entry(btn_frame, width=30)
 title_entry.pack(side=tk.LEFT)
+
+progress_frame = tk.Frame(root)
+progress_frame.pack(fill=tk.X, padx=10, pady=(0, 10))
+progress_var = tk.DoubleVar(value=0)
+progress_bar = ttk.Progressbar(progress_frame, variable=progress_var, maximum=100)
+progress_bar.pack(fill=tk.X, expand=True)
+progress_label = tk.Label(progress_frame, text="")
+progress_label.pack(anchor="w")
 
 root.mainloop()
