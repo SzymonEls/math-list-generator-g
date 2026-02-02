@@ -38,6 +38,12 @@ images_with_rois = []
 img_copy = None
 img_copy_prev = None
 tk_image = None
+task_items = []
+preview_image = None
+image_sources = {}
+image_rectangles = {}
+current_image_id = None
+image_counter = 0
 
 def draw_grid(c, page_width, page_height, grid_size_mm=5):
     grid_size = grid_size_mm * mm
@@ -93,6 +99,130 @@ def create_pdf_with_tasks(images_with_rois, pdf_filename, title_text):
 
     c.save()
 
+def create_pdf_from_task_items(task_items, pdf_filename, title_text):
+    c = canvas.Canvas(pdf_filename, pagesize=A4)
+    width, height = A4
+    total_pages = len(task_items)
+    page_num = 1
+
+    for item in task_items:
+        img_np = item["img"]
+        start, end = item["rect"]
+        x1, y1 = map(int, start)
+        x2, y2 = map(int, end)
+        x_min, x_max = sorted([x1, x2])
+        y_min, y_max = sorted([y1, y2])
+        roi = img_np[y_min:y_max, x_min:x_max]
+
+        draw_grid(c, width, height, grid_size_mm=5)
+
+        is_success, buffer = cv2.imencode(".jpg", roi)
+        if not is_success:
+            continue
+        img_bytes = io.BytesIO(buffer)
+        img_reader = ImageReader(img_bytes)
+        iw, ih = img_reader.getSize()
+
+        scale = min(width / iw, height / ih) * 0.9
+        iw_scaled, ih_scaled = iw * scale, ih * scale
+        x = (width - iw_scaled) / 2
+        y = height - ih_scaled - 40
+
+        c.drawImage(img_reader, x, y, width=iw_scaled, height=ih_scaled)
+
+        if title_text:
+            c.setFont("DejaVu", 11)
+            c.drawCentredString(width / 2, 15, title_text)
+
+        c.setFont("DejaVu", 10)
+        c.drawRightString(width - 20, 10, f"{page_num}/{total_pages}")
+
+        page_num += 1
+        c.showPage()
+
+    c.save()
+
+def rebuild_task_listbox():
+    task_listbox.delete(0, tk.END)
+    for item in task_items:
+        task_listbox.insert(tk.END, item["label"])
+    update_preview()
+
+def update_preview():
+    global preview_image
+    selection = task_listbox.curselection()
+    if not selection:
+        preview_label.config(image="", text="Brak podglądu")
+        preview_image = None
+        return
+    index = selection[0]
+    item = task_items[index]
+    img_np = item["img"]
+    start, end = item["rect"]
+    x1, y1 = map(int, start)
+    x2, y2 = map(int, end)
+    x_min, x_max = sorted([x1, x2])
+    y_min, y_max = sorted([y1, y2])
+    roi = img_np[y_min:y_max, x_min:x_max]
+    if roi.size == 0:
+        preview_label.config(image="", text="Brak podglądu")
+        preview_image = None
+        return
+    roi_rgb = cv2.cvtColor(roi, cv2.COLOR_BGR2RGB)
+    pil_image = Image.fromarray(roi_rgb)
+    pil_image.thumbnail((220, 220))
+    preview_image = ImageTk.PhotoImage(pil_image)
+    preview_label.config(image=preview_image, text="")
+
+def add_task_item(img_np, rect, label, source, source_id):
+    task_items.append(
+        {
+            "img": img_np.copy(),
+            "rect": rect,
+            "label": label,
+            "source": source,
+            "source_id": source_id,
+        }
+    )
+    rebuild_task_listbox()
+
+def remove_task_item(index):
+    if index < 0 or index >= len(task_items):
+        return
+    item = task_items.pop(index)
+    if item["source"] == "pdf":
+        rects = pdf_rectangles[item["source_id"]]
+        if item["rect"] in rects:
+            rects.remove(item["rect"])
+    else:
+        rects = image_rectangles.get(item["source_id"], [])
+        if item["rect"] in rects:
+            rects.remove(item["rect"])
+    rebuild_task_listbox()
+    redraw_current_image()
+
+def redraw_current_image():
+    canvas_widget.delete("all")
+    if tk_image is None:
+        return
+    canvas_widget.create_image(0, 0, image=tk_image, anchor="nw")
+    if rectangles:
+        for start, end in rectangles:
+            canvas_widget.create_rectangle(*start, *end, outline='green', width=2)
+
+def move_task(direction):
+    selection = task_listbox.curselection()
+    if not selection:
+        return
+    index = selection[0]
+    new_index = index + direction
+    if new_index < 0 or new_index >= len(task_items):
+        return
+    task_items[index], task_items[new_index] = task_items[new_index], task_items[index]
+    rebuild_task_listbox()
+    task_listbox.selection_set(new_index)
+    update_preview()
+
 def on_mouse_down(event):
     global start_point, drawing
     drawing = True
@@ -108,7 +238,13 @@ def on_mouse_up(event):
     drawing = False
 
     if is_pdf_mode:
-        pdf_rectangles[current_page] = rectangles.copy()
+        page_label = f"PDF strona {current_page + 1}"
+        img_np = cv2.cvtColor(np.array(pdf_pages[current_page]), cv2.COLOR_RGB2BGR)
+        add_task_item(img_np, (start_point, end_point), page_label, "pdf", current_page)
+    else:
+        if current_image_id is not None and img_copy is not None:
+            image_label = f"Obraz {current_image_id}"
+            add_task_item(img_copy, (start_point, end_point), image_label, "image", current_image_id)
 
 def on_mouse_move(event):
     global drawing
@@ -162,7 +298,7 @@ def choose_pdf():
 
 
 def choose_file():
-    global rectangles, img_copy, tk_image, img_copy_prev
+    global rectangles, img_copy, tk_image, img_copy_prev, current_image_id, image_counter
 
     file_path = filedialog.askopenfilename(title="Wybierz obraz", filetypes=[("Obrazy", "*.jpg *.png *.bmp")])
     if not file_path:
@@ -179,11 +315,11 @@ def choose_file():
     image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
     pil_image = Image.fromarray(image_rgb)
 
-    # Zapisz poprzednie zaznaczenia
-    if rectangles and img_copy_prev is not None:
-        images_with_rois.append((img_copy_prev, rectangles.copy()))
-
-    rectangles.clear()
+    image_counter += 1
+    current_image_id = image_counter
+    image_sources[current_image_id] = image
+    image_rectangles[current_image_id] = []
+    rectangles = image_rectangles[current_image_id]
 
     img_copy = image
     img_copy_prev = image
@@ -196,34 +332,30 @@ def choose_file():
 def save_pdf():
     global img_copy_prev
     
-    if is_pdf_mode:
-        images_with_rois.clear()
-        for i, page_img in enumerate(pdf_pages):
-            img_np = cv2.cvtColor(np.array(page_img), cv2.COLOR_RGB2BGR)
-            rects = pdf_rectangles[i]
-            if rects:
-                images_with_rois.append((img_np, rects.copy()))
-    else:
-        if rectangles and img_copy_prev is not None:
-            images_with_rois.append((img_copy_prev, rectangles.copy()))
-
-    if not images_with_rois:
+    if not task_items:
         print("Brak zaznaczonych zadań.")
         return
 
     pdf_path = filedialog.asksaveasfilename(defaultextension=".pdf", filetypes=[("PDF", "*.pdf")])
     if pdf_path:
         title_text = title_entry.get()
-        create_pdf_with_tasks(images_with_rois, pdf_path, title_text)
+        create_pdf_from_task_items(task_items, pdf_path, title_text)
         print(f"Zapisano PDF: {pdf_path}")
 
 def on_ctrl_z(event):
     if rectangles:
-        rectangles.pop()
-        canvas_widget.delete("all")
-        canvas_widget.create_image(0, 0, image=tk_image, anchor="nw")
-        for start, end in rectangles:
-            canvas_widget.create_rectangle(*start, *end, outline='green', width=2)
+        removed = rectangles.pop()
+        for idx in range(len(task_items) - 1, -1, -1):
+            item = task_items[idx]
+            if item["rect"] == removed:
+                if is_pdf_mode and item["source"] == "pdf" and item["source_id"] == current_page:
+                    task_items.pop(idx)
+                    break
+                if not is_pdf_mode and item["source"] == "image" and item["source_id"] == current_image_id:
+                    task_items.pop(idx)
+                    break
+        rebuild_task_listbox()
+        redraw_current_image()
 
 def prev_page():
     global current_page
@@ -248,14 +380,20 @@ frame.pack(fill=tk.BOTH, expand=True)
 
 root.bind('<Control-z>', on_ctrl_z)
 
-canvas_widget = tk.Canvas(frame, bg="white", width=800, height=600, scrollregion=(0, 0, 2000, 2000))
+content_frame = tk.Frame(frame)
+content_frame.pack(fill=tk.BOTH, expand=True)
+
+canvas_frame = tk.Frame(content_frame)
+canvas_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+canvas_widget = tk.Canvas(canvas_frame, bg="white", width=800, height=600, scrollregion=(0, 0, 2000, 2000))
 canvas_widget.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
-scrollbar_y = tk.Scrollbar(frame, orient=tk.VERTICAL, command=canvas_widget.yview)
+scrollbar_y = tk.Scrollbar(canvas_frame, orient=tk.VERTICAL, command=canvas_widget.yview)
 scrollbar_y.pack(side=tk.RIGHT, fill=tk.Y)
 canvas_widget.config(yscrollcommand=scrollbar_y.set)
 
-scrollbar_x = tk.Scrollbar(root, orient=tk.HORIZONTAL, command=canvas_widget.xview)
+scrollbar_x = tk.Scrollbar(canvas_frame, orient=tk.HORIZONTAL, command=canvas_widget.xview)
 scrollbar_x.pack(side=tk.BOTTOM, fill=tk.X)
 canvas_widget.config(xscrollcommand=scrollbar_x.set)
 
@@ -264,6 +402,25 @@ canvas_widget.bind("<B1-Motion>", on_mouse_move)
 canvas_widget.bind("<ButtonRelease-1>", on_mouse_up)
 canvas_widget.bind_all("<MouseWheel>", _on_mousewheel)
 canvas_widget.bind_all("<Shift-MouseWheel>", _on_shift_mousewheel)
+
+# === Panel boczny ===
+side_frame = tk.Frame(content_frame, padx=10, pady=10)
+side_frame.pack(side=tk.RIGHT, fill=tk.Y)
+
+tk.Label(side_frame, text="Zaznaczone zadania").pack(anchor="w")
+task_listbox = tk.Listbox(side_frame, height=18, width=30)
+task_listbox.pack(fill=tk.Y, expand=False)
+task_listbox.bind("<<ListboxSelect>>", lambda event: update_preview())
+
+task_buttons_frame = tk.Frame(side_frame)
+task_buttons_frame.pack(pady=5, fill=tk.X)
+tk.Button(task_buttons_frame, text="↑", command=lambda: move_task(-1)).pack(side=tk.LEFT, padx=2)
+tk.Button(task_buttons_frame, text="↓", command=lambda: move_task(1)).pack(side=tk.LEFT, padx=2)
+tk.Button(task_buttons_frame, text="Usuń", command=lambda: remove_task_item(task_listbox.curselection()[0]) if task_listbox.curselection() else None).pack(side=tk.LEFT, padx=2)
+
+tk.Label(side_frame, text="Podgląd zadania").pack(anchor="w", pady=(10, 0))
+preview_label = tk.Label(side_frame, text="Brak podglądu", width=30, height=10, relief=tk.SUNKEN)
+preview_label.pack()
 
 # === Panel przycisków ===
 btn_frame = tk.Frame(root)
