@@ -1,7 +1,7 @@
 import numpy as np
 import io
 import tkinter as tk
-from tkinter import filedialog
+from tkinter import filedialog, messagebox
 from PIL import Image, ImageOps, ImageTk
 from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import A4
@@ -11,6 +11,7 @@ from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 import pypdfium2 as pdfium
 import os
+import sys
 
 #pdf
 pdf_pages = []  # Lista PIL.Image dla każdej strony PDF
@@ -18,10 +19,21 @@ pdf_rectangles = []  # Lista list prostokątów per strona
 current_page = 0
 is_pdf_mode = False
 
+def resource_dir():
+    """Katalog z plikami dołączonymi do programu.
+
+    Działa zarówno przy zwykłym `python main.py`, jak i w wersji spakowanej
+    PyInstallerem (zasoby lądują wtedy w katalogu tymczasowym `sys._MEIPASS`).
+    """
+    if getattr(sys, "frozen", False):
+        return getattr(sys, "_MEIPASS", os.path.dirname(sys.executable))
+    return os.path.dirname(os.path.abspath(__file__))
+
+
 # Czcionka z polskimi znakami: najpierw kopia dołączona do projektu,
 # potem typowe lokalizacje systemowe (Linux / Windows / macOS).
 FONT_CANDIDATES = [
-    os.path.join(os.path.dirname(os.path.abspath(__file__)), "DejaVuSans.ttf"),
+    os.path.join(resource_dir(), "DejaVuSans.ttf"),
     "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
     "/usr/share/fonts/dejavu/DejaVuSans.ttf",
     "C:\\Windows\\Fonts\\DejaVuSans.ttf",
@@ -33,10 +45,14 @@ FONT_CANDIDATES = [
 font_path = next((p for p in FONT_CANDIDATES if os.path.exists(p)), None)
 
 if font_path is None:
-    raise FileNotFoundError(
+    _msg = (
         "Nie znaleziono czcionki z polskimi znakami. Pobierz 'DejaVuSans.ttf' "
-        "z https://dejavu-fonts.github.io/ i umieść w katalogu skryptu."
+        "z https://dejavu-fonts.github.io/ i umieść w katalogu programu."
     )
+    _err_root = tk.Tk()
+    _err_root.withdraw()
+    messagebox.showerror("Brak czcionki", _msg)
+    raise SystemExit(_msg)
 
 # Rejestracja czcionki
 pdfmetrics.registerFont(TTFont('DejaVu', font_path))
@@ -167,7 +183,7 @@ def choose_pdf():
         # .copy() odrywa obraz od bufora pdfium (dokument mozna wtedy zwolnic)
         pdf_pages = [page.render(scale=200 / 72).to_pil().copy() for page in pdf]
     except Exception as e:
-        print(f"Błąd odczytu PDF: {e}")
+        messagebox.showerror("Błąd odczytu PDF", str(e))
         return
 
     is_pdf_mode = True
@@ -190,7 +206,7 @@ def choose_file():
         with Image.open(file_path) as opened:
             pil_image = ImageOps.exif_transpose(opened).convert("RGB")
     except Exception as e:
-        print(f"Błąd odczytu obrazu: {e}")
+        messagebox.showerror("Błąd odczytu obrazu", str(e))
         return
 
     image = np.array(pil_image)
@@ -224,14 +240,14 @@ def save_pdf():
             images_with_rois.append((img_copy_prev, rectangles.copy()))
 
     if not images_with_rois:
-        print("Brak zaznaczonych zadań.")
+        messagebox.showwarning("Brak zadań", "Nie zaznaczono żadnego zadania.")
         return
 
     pdf_path = filedialog.asksaveasfilename(defaultextension=".pdf", filetypes=[("PDF", "*.pdf")])
     if pdf_path:
         title_text = title_entry.get()
         create_pdf_with_tasks(images_with_rois, pdf_path, title_text)
-        print(f"Zapisano PDF: {pdf_path}")
+        messagebox.showinfo("Gotowe", f"Zapisano PDF:\n{pdf_path}")
 
 def on_ctrl_z(event):
     if rectangles:
