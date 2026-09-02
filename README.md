@@ -32,10 +32,13 @@ Aktywacja: `source .venv/bin/activate` (Linux/macOS) lub
 
 ## Instalator dla Windows
 
-Dla osób, które nie chcą instalować Pythona, jest instalator `.exe`: skrót
-w menu Start, opcjonalny skrót na pulpicie i odinstalowanie przez
+Dla osób, które nie chcą instalować Pythona, jest zwykły instalator `.exe`:
+skrót w menu Start, opcjonalny skrót na pulpicie i odinstalowanie przez
 "Aplikacje i funkcje". Nie wymaga uprawnień administratora (domyślnie instaluje
-się dla bieżącego użytkownika).
+się dla bieżącego użytkownika, można przełączyć na "dla wszystkich").
+
+Gotowy plik do pobrania:
+[Releases](https://github.com/SzymonEls/math-list-generator-g/releases).
 
 ### Jak zbudować instalator
 
@@ -46,28 +49,63 @@ Jednorazowo, na tym komputerze:
 
 1. [Python 3.9 lub nowszy](https://www.python.org/downloads/windows/) -
    przy instalacji zaznacz **"Add python.exe to PATH"**.
-2. [Inno Setup 6](https://jrsoftware.org/isdl.php) (wersja 6.3 lub nowsza) -
+2. Inno Setup 6 (wersja 6.3 lub nowsza):
+
+   ```
+   winget install -e --id JRSoftware.InnoSetup
+   ```
+
+   albo ręcznie z [jrsoftware.org](https://jrsoftware.org/isdl.php) -
    instalacja domyślna, nic nie trzeba zmieniać.
 
 Potem, w katalogu projektu, w PowerShellu:
 
 ```
-powershell -ExecutionPolicy Bypass -File installer\build_windows.ps1 -Version 1.0.0
+powershell -ExecutionPolicy Bypass -File installer\build_windows.ps1
 ```
 
 Skrypt sam doinstaluje zależności i PyInstallera, zbuduje aplikację i złoży
-instalator. Wynik:
+instalator. Numer wersji bierze z `APP_VERSION` w `main.py`. Wynik:
 
 ```
 dist\installer\MathListGenerator-1.0.0-setup.exe
 ```
 
-Kolejne buildy tej samej wersji można przyspieszyć flagą `-SkipDeps`
-(pomija instalację zależności).
+Przydatne flagi:
+
+| Flaga | Do czego |
+| --- | --- |
+| `-SkipDeps` | pomija `pip install` - kolejne buildy idą szybciej |
+| `-SkipInstaller` | buduje samą aplikację do `dist\MathListGenerator\`, bez Inno Setup |
+| `-Version X.Y.Z` | wersja inna niż `APP_VERSION` (np. build testowy) |
+
+Uruchamiać zawsze `.exe` z katalogu `dist`. Katalog `build` to śmieci robocze
+PyInstallera - leży w nim druga kopia `MathListGenerator.exe`, która jest samym
+bootloaderem bez `python3xx.dll` i przy uruchomieniu daje
+"Failed to load Python DLL". Skrypt kasuje ten katalog po udanym buildzie.
+
+### Wydanie nowej wersji
+
+1. Podnieś `APP_VERSION` w [`main.py`](main.py) do `X.Y.Z` i zacommituj.
+   To jedyne miejsce z numerem wersji - stąd bierze go tytuł okna, właściwości
+   `.exe` i nazwa pliku instalatora.
+2. Zbuduj instalator (polecenie wyżej).
+3. Zainstaluj wynikowy `.exe` u siebie i sprawdź, czy działa skrót w menu Start
+   i czy da się odinstalować.
+4. Otaguj i wypchnij tag:
+
+   ```
+   git tag -a v1.0.0 -m "Wersja 1.0.0"
+   git push origin v1.0.0
+   ```
+
+5. Na GitHubie: **Releases** -> **Draft a new release** -> wybierz tag `v1.0.0`,
+   dołącz plik `MathListGenerator-1.0.0-setup.exe`, opisz co się zmieniło
+   i **Publish release**.
 
 Uwaga: instalator nie jest podpisany certyfikatem, więc przy pierwszym
 uruchomieniu Windows pokaże ostrzeżenie SmartScreen - trzeba kliknąć
-"Więcej informacji" i "Uruchom mimo to".
+"Więcej informacji" i "Uruchom mimo to". Warto o tym uprzedzić w opisie wydania.
 
 ## Uruchomienie
 

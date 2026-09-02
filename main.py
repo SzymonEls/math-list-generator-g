@@ -19,6 +19,11 @@ from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.pdfgen import canvas as pdfcanvas
 
+APP_NAME = "Generator list zadań"
+# Jedyne miejsce z numerem wersji - stąd bierze go tytuł okna i skrypt
+# budujący instalator (installer/build_windows.ps1).
+APP_VERSION = "1.0.0"
+
 RENDER_DPI = 200
 # Rozdzielczość zakładana dla obrazów, które nie niosą sensownej informacji o DPI
 # (typowy skan/zdjęcie podręcznika). Decyduje o tym, jak duże będzie zadanie na stronie.
@@ -266,7 +271,7 @@ class App:
         self.drag_origin = None  # geometria zadania sprzed przeciągnięcia (do cofania)
         self.drag_anchor = None  # punkt złapania, w koordynatach obrazu
 
-        root.title("Generator list zadań")
+        root.title(f"{APP_NAME} {APP_VERSION}")
         root.geometry("1280x820")
         root.minsize(1000, 640)
 

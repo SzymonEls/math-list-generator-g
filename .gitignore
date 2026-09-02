@@ -26,6 +26,14 @@ share/python-wheels/
 *.egg
 MANIFEST
 
+# PyInstaller / instalator Windows - wszystko poniżej jest już objęte przez
+# build/ i dist/ wyżej, tu tylko dla jasności, co powstaje przy buildzie:
+#   build\                     katalog roboczy (kasowany po udanym buildzie;
+#                              leży w nim myląca kopia .exe, która NIE działa)
+#   dist\MathListGenerator\    gotowa aplikacja - stąd uruchamiać .exe
+#   dist\installer\            MathListGenerator-X.Y.Z-setup.exe
+#   MathListGenerator.spec     generowany przez PyInstallera (patrz *.spec niżej)
+
 # PyInstaller
 #  Usually these files are written by a python script from a template
 #  before PyInstaller builds the exe, so as to inject date/other infos into it.
