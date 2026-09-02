@@ -1,0 +1,11 @@
+# Instalacja wszystkich zaleznosci:
+#   python -m pip install -r requirements.txt
+#
+# Nie sa potrzebne zadne dodatkowe programy systemowe (Poppler nie jest juz wymagany).
+# Uwaga: na Linuksie tkinter bywa osobnym pakietem systemowym, np.:
+#   sudo apt install python3-tk
+
+numpy>=1.24
+Pillow>=10.0
+reportlab>=4.0
+pypdfium2>=4.25

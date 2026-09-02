@@ -161,3 +161,5 @@ cython_debug/
 
 #other
 *.ttf
+# Czcionka dolaczona do projektu (potrzebna do polskich znakow w PDF)
+!DejaVuSans.ttf

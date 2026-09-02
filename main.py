@@ -1,16 +1,15 @@
-import cv2
 import numpy as np
 import io
 import tkinter as tk
 from tkinter import filedialog
-from PIL import Image, ImageTk
+from PIL import Image, ImageOps, ImageTk
 from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.units import mm
 from reportlab.lib.utils import ImageReader
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
-from pdf2image import convert_from_path
+import pypdfium2 as pdfium
 import os
 
 #pdf
@@ -19,12 +18,24 @@ pdf_rectangles = []  # Lista list prostokątów per strona
 current_page = 0
 is_pdf_mode = False
 
-# Ścieżka do czcionki w katalogu skryptu
-font_path = os.path.join(os.path.dirname(__file__), "DejaVuSans.ttf")
+# Czcionka z polskimi znakami: najpierw kopia dołączona do projektu,
+# potem typowe lokalizacje systemowe (Linux / Windows / macOS).
+FONT_CANDIDATES = [
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "DejaVuSans.ttf"),
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    "/usr/share/fonts/dejavu/DejaVuSans.ttf",
+    "C:\\Windows\\Fonts\\DejaVuSans.ttf",
+    "C:\\Windows\\Fonts\\arial.ttf",
+    "/Library/Fonts/Arial Unicode.ttf",
+    "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
+]
 
-if not os.path.exists(font_path):
+font_path = next((p for p in FONT_CANDIDATES if os.path.exists(p)), None)
+
+if font_path is None:
     raise FileNotFoundError(
-        "Brak pliku czcionki 'DejaVuSans.ttf'. Pobierz ją np. z https://dejavu-fonts.github.io/ i umieść w katalogu skryptu."
+        "Nie znaleziono czcionki z polskimi znakami. Pobierz 'DejaVuSans.ttf' "
+        "z https://dejavu-fonts.github.io/ i umieść w katalogu skryptu."
     )
 
 # Rejestracja czcionki
@@ -51,10 +62,10 @@ def draw_grid(c, page_width, page_height, grid_size_mm=5):
 def create_pdf_with_tasks(images_with_rois, pdf_filename, title_text):
     c = canvas.Canvas(pdf_filename, pagesize=A4)
     width, height = A4
-    # Oblicz całkowitą liczbę stron
-    total_pages = sum(len(rects) for _, rects in images_with_rois)
-    page_num = 1
 
+    # Najpierw wytnij wszystkie zadania, pomijając puste zaznaczenia
+    # (kliknięcie bez przeciągnięcia) - dzięki temu numeracja stron się zgadza.
+    rois = []
     for img_np, rects in images_with_rois:
         for start, end in rects:
             x1, y1 = map(int, start)
@@ -62,34 +73,37 @@ def create_pdf_with_tasks(images_with_rois, pdf_filename, title_text):
             x_min, x_max = sorted([x1, x2])
             y_min, y_max = sorted([y1, y2])
             roi = img_np[y_min:y_max, x_min:x_max]
+            if roi.size:
+                rois.append(roi)
 
-            draw_grid(c, width, height, grid_size_mm=5)
+    total_pages = len(rois)
 
-            is_success, buffer = cv2.imencode(".jpg", roi)
-            if not is_success:
-                continue
-            img_bytes = io.BytesIO(buffer)
-            img_reader = ImageReader(img_bytes)
-            iw, ih = img_reader.getSize()
+    for page_num, roi in enumerate(rois, start=1):
+        draw_grid(c, width, height, grid_size_mm=5)
 
-            scale = min(width / iw, height / ih) * 0.9
-            iw_scaled, ih_scaled = iw * scale, ih * scale
-            x = (width - iw_scaled) / 2
-            y = height - ih_scaled - 40
+        img_bytes = io.BytesIO()
+        Image.fromarray(roi).save(img_bytes, format="JPEG", quality=95)
+        img_bytes.seek(0)
+        img_reader = ImageReader(img_bytes)
+        iw, ih = img_reader.getSize()
 
-            c.drawImage(img_reader, x, y, width=iw_scaled, height=ih_scaled)
+        scale = min(width / iw, height / ih) * 0.9
+        iw_scaled, ih_scaled = iw * scale, ih * scale
+        x = (width - iw_scaled) / 2
+        y = height - ih_scaled - 40
 
-            # Dodaj tytuł na dole
-            if title_text:
-                c.setFont("DejaVu", 11)
-                c.drawCentredString(width / 2, 15, title_text)
+        c.drawImage(img_reader, x, y, width=iw_scaled, height=ih_scaled)
 
-            # Numeracja stron w stylu "Strona X z Y"
-            c.setFont("DejaVu", 10)
-            c.drawRightString(width - 20, 10, f"{page_num}/{total_pages}")
+        # Dodaj tytuł na dole
+        if title_text:
+            c.setFont("DejaVu", 11)
+            c.drawCentredString(width / 2, 15, title_text)
 
-            page_num += 1
-            c.showPage()
+        # Numeracja stron w stylu "Strona X z Y"
+        c.setFont("DejaVu", 10)
+        c.drawRightString(width - 20, 10, f"{page_num}/{total_pages}")
+
+        c.showPage()
 
     c.save()
 
@@ -127,7 +141,7 @@ def show_pdf_page():
     global tk_image, img_copy, rectangles
 
     pil_image = pdf_pages[current_page]
-    img_copy = cv2.cvtColor(np.array(pil_image), cv2.COLOR_RGB2BGR)
+    img_copy = np.array(pil_image)
     rectangles = pdf_rectangles[current_page]
 
     tk_image = ImageTk.PhotoImage(pil_image)
@@ -148,7 +162,10 @@ def choose_pdf():
         return
 
     try:
-        pdf_pages = convert_from_path(file_path, dpi=200)
+        pdf = pdfium.PdfDocument(file_path)
+        # scale = dpi / 72 -> 200 dpi
+        # .copy() odrywa obraz od bufora pdfium (dokument mozna wtedy zwolnic)
+        pdf_pages = [page.render(scale=200 / 72).to_pil().copy() for page in pdf]
     except Exception as e:
         print(f"Błąd odczytu PDF: {e}")
         return
@@ -168,16 +185,15 @@ def choose_file():
     if not file_path:
         return
 
-    # Wczytanie obrazu z obsługą ścieżek Unicode
+    # Wczytanie obrazu z obsługą ścieżek Unicode i orientacji EXIF
     try:
-        img_array = np.fromfile(file_path, dtype=np.uint8)
-        image = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
+        with Image.open(file_path) as opened:
+            pil_image = ImageOps.exif_transpose(opened).convert("RGB")
     except Exception as e:
         print(f"Błąd odczytu obrazu: {e}")
         return
 
-    image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-    pil_image = Image.fromarray(image_rgb)
+    image = np.array(pil_image)
 
     # Zapisz poprzednie zaznaczenia
     if rectangles and img_copy_prev is not None:
@@ -199,7 +215,7 @@ def save_pdf():
     if is_pdf_mode:
         images_with_rois.clear()
         for i, page_img in enumerate(pdf_pages):
-            img_np = cv2.cvtColor(np.array(page_img), cv2.COLOR_RGB2BGR)
+            img_np = np.array(page_img)
             rects = pdf_rectangles[i]
             if rects:
                 images_with_rois.append((img_np, rects.copy()))
