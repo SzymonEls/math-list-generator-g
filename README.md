@@ -82,6 +82,7 @@ python main.py
    ile zadań już na niej zaznaczono.
 2. Przeciągnij myszką prostokąt wokół zadania. Zaznaczenie dostaje numer,
    trafia na listę **Zaznaczone zadania** i widać je w **Podglądzie**.
+   Zaznaczone zadanie można jeszcze poprawić — patrz niżej.
 3. Wpisz tytuł (pojawi się na dole każdej strony) i kliknij **Zapisz PDF…**.
    Zadania trafią do PDF-u w kolejności z listy — po jednym na stronę.
 
@@ -102,6 +103,22 @@ z metadanych pliku, a gdy ich nie ma (albo są bezsensownie niskie), zakłada
 200 dpi — typowy skan. Jeśli zadania wychodzą za małe lub za duże, przełącz
 tryb na **Dopasuj do strony**.
 
+### Poprawianie zaznaczenia
+
+Zaznaczone zadanie ma białe uchwyty w rogach i na środkach boków:
+
+- **przeciągnij wnętrze** prostokąta, żeby przesunąć zadanie po stronie,
+- **przeciągnij uchwyt**, żeby zmienić rozmiar (róg zmienia dwa boki naraz),
+- **strzałki** przesuwają co 1 piksel, **Shift + strzałki** co 10.
+
+Kursor podpowiada, co się stanie: krzyżyk rysuje nowy prostokąt, dłoń
+przesuwa, strzałka na krawędzi zmienia rozmiar. Zadanie nie wyjedzie poza
+stronę, a `Ctrl+Z` cofa też przesunięcia i zmiany rozmiaru (cała seria
+przesunięć strzałkami to jeden krok cofania).
+
+Żeby narysować nowy prostokąt w obrębie istniejącego zadania, najpierw
+kliknij poza nim — przesuwa się tylko zadanie aktualnie zaznaczone.
+
 ### Panel boczny
 
 - **Wczytane pliki** — co jest załadowane i ile zadań przypada na każdą stronę.
@@ -120,6 +137,8 @@ tryb na **Dopasuj do strony**.
 | `Ctrl+S` | zapisz PDF |
 | `Ctrl+Z` | cofnij ostatnie zaznaczenie |
 | `Delete` | usuń zaznaczone zadanie |
+| strzałki | przesuń zaznaczone zadanie o 1 px |
+| `Shift` + strzałki | przesuń zaznaczone zadanie o 10 px |
 | `PgUp` / `PgDn` | poprzednia / następna strona |
 | `Ctrl` + kółko myszy | powiększanie |
 | `Ctrl+0` | dopasuj stronę do okna |
@@ -128,6 +147,8 @@ tryb na **Dopasuj do strony**.
 ### Wskazówki
 
 - Kliknięcie w istniejący prostokąt zaznacza go (bez tworzenia nowego).
+- Po zaznaczeniu prostokąt można przesuwać i skalować — nie trzeba go
+  kasować i rysować od nowa.
 - Prawy przycisk myszy na prostokącie pozwala go usunąć.
 - Strony PDF-u renderują się dopiero przy pierwszym wyświetleniu, więc nawet
   duże pliki otwierają się od razu.

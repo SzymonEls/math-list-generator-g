@@ -35,6 +35,16 @@ MAX_ZOOM = 4.0
 ZOOM_FACTOR = 1.25
 MIN_RECT_PX = 8  # mniejsze przeciągnięcie traktujemy jak kliknięcie
 
+HANDLE_PX = 8        # bok kwadratowego uchwytu na ekranie
+HANDLE_GRAB_PX = 11  # tolerancja trafienia w uchwyt
+
+# Uchwyty zmiany rozmiaru: rogi i środki boków, z kursorem dla każdego.
+HANDLE_CURSORS = {
+    "nw": "top_left_corner", "n": "top_side", "ne": "top_right_corner",
+    "e": "right_side", "se": "bottom_right_corner", "s": "bottom_side",
+    "sw": "bottom_left_corner", "w": "left_side",
+}
+
 SIZE_NATURAL = "Naturalny (bez powiększania)"
 SIZE_FIT = "Dopasuj do strony"
 
@@ -140,6 +150,14 @@ class Task:
     def crop(self):
         return self.page.pil.crop((self.x1, self.y1, self.x2, self.y2))
 
+    @property
+    def geometry(self):
+        return (self.x1, self.y1, self.x2, self.y2)
+
+    @geometry.setter
+    def geometry(self, box):
+        self.x1, self.y1, self.x2, self.y2 = box
+
 
 # === Generowanie PDF ===
 
@@ -234,7 +252,8 @@ class App:
         self.documents = []
         self.pages = []          # płaska lista wszystkich stron, w kolejności wczytania
         self.tasks = []          # kolejność zadań = kolejność stron w wynikowym PDF
-        self.undo_stack = []     # zadania w kolejności dodawania (do Ctrl+Z)
+        # Historia do Ctrl+Z: ("add", zadanie) albo ("geom", zadanie, poprzednia_geometria)
+        self.undo_stack = []
         self.current_page = None
         self.selected_task = None
         self.zoom = 1.0
@@ -242,6 +261,10 @@ class App:
         self.preview_image = None
         self.drag_start = None   # (x, y) w koordynatach obrazu
         self.dragging = False
+        self.drag_mode = None    # "new" | "move" | "resize"
+        self.drag_handle = None  # który uchwyt złapano przy zmianie rozmiaru
+        self.drag_origin = None  # geometria zadania sprzed przeciągnięcia (do cofania)
+        self.drag_anchor = None  # punkt złapania, w koordynatach obrazu
 
         root.title("Generator list zadań")
         root.geometry("1280x820")
@@ -425,6 +448,12 @@ class App:
         self.canvas.bind("<MouseWheel>", self.on_wheel)
         self.canvas.bind("<Shift-MouseWheel>", self.on_shift_wheel)
         self.canvas.bind("<Control-MouseWheel>", self.on_ctrl_wheel)
+        for key, (dx, dy) in (("Left", (-1, 0)), ("Right", (1, 0)),
+                              ("Up", (0, -1)), ("Down", (0, 1))):
+            self.canvas.bind(f"<{key}>",
+                             lambda e, dx=dx, dy=dy: self.nudge_selected(dx, dy))
+            self.canvas.bind(f"<Shift-{key}>",
+                             lambda e, dx=dx, dy=dy: self.nudge_selected(dx * 10, dy * 10))
         self.canvas.bind("<Delete>", lambda e: self.delete_selected_task())
         self.canvas.bind("<BackSpace>", lambda e: self.delete_selected_task())
         self.canvas.bind("<Button-4>", lambda e: self.canvas.yview_scroll(-1, "units"))
@@ -521,7 +550,7 @@ class App:
             return
         doc_pages = set(id(p) for p in doc.pages)
         self.tasks = [t for t in self.tasks if id(t.page) not in doc_pages]
-        self.undo_stack = [t for t in self.undo_stack if id(t.page) not in doc_pages]
+        self.undo_stack = [op for op in self.undo_stack if id(op[1].page) not in doc_pages]
         self.pages = [p for p in self.pages if id(p) not in doc_pages]
         self.documents.remove(doc)
         if self.current_page is not None and id(self.current_page) in doc_pages:
@@ -650,19 +679,137 @@ class App:
                 x1 + 13, y1 + 10, text=str(i), fill="white",
                 font=("TkDefaultFont", 10, "bold"), tags="overlay")
 
+            # Uchwyty tylko przy zaznaczonym — inaczej strona robi się zaśmiecona
+            if is_sel:
+                r = HANDLE_PX / 2
+                for cx, cy in self.handle_points(task).values():
+                    self.canvas.create_rectangle(
+                        cx - r, cy - r, cx + r, cy + r,
+                        fill="white", outline=color, width=2, tags="overlay")
+
+    # --- Uchwyty zaznaczenia ---
+
+    def handle_points(self, task):
+        """Środki uchwytów zadania, w koordynatach canvasu."""
+        z = self.zoom
+        x1, y1, x2, y2 = (v * z for v in task.geometry)
+        mx, my = (x1 + x2) / 2, (y1 + y2) / 2
+        return {"nw": (x1, y1), "n": (mx, y1), "ne": (x2, y1), "e": (x2, my),
+                "se": (x2, y2), "s": (mx, y2), "sw": (x1, y2), "w": (x1, my)}
+
+    def handle_at(self, event):
+        """Nazwa uchwytu pod kursorem albo None. Dotyczy tylko zaznaczonego zadania."""
+        task = self.selected_task
+        if task is None or task.page is not self.current_page or task not in self.tasks:
+            return None
+        cx = self.canvas.canvasx(event.x)
+        cy = self.canvas.canvasy(event.y)
+        for name, (hx, hy) in self.handle_points(task).items():
+            if abs(cx - hx) <= HANDLE_GRAB_PX and abs(cy - hy) <= HANDLE_GRAB_PX:
+                return name
+        return None
+
+    def apply_move(self, dx, dy):
+        """Przesuwa zadanie o (dx, dy), nie wypuszczając go poza stronę."""
+        task = self.selected_task
+        ox1, oy1, ox2, oy2 = self.drag_origin
+        iw, ih = self.current_page.pil.size
+        dx = max(-ox1, min(iw - ox2, dx))
+        dy = max(-oy1, min(ih - oy2, dy))
+        task.geometry = (int(ox1 + dx), int(oy1 + dy), int(ox2 + dx), int(oy2 + dy))
+
+    def apply_resize(self, x, y):
+        """Przesuwa złapaną krawędź do (x, y), pilnując minimalnego rozmiaru i strony."""
+        task = self.selected_task
+        x1, y1, x2, y2 = self.drag_origin
+        iw, ih = self.current_page.pil.size
+        x = max(0, min(iw, x))
+        y = max(0, min(ih, y))
+        h = self.drag_handle
+
+        if "w" in h:
+            x1 = min(x, x2 - MIN_RECT_PX)
+        elif "e" in h:
+            x2 = max(x, x1 + MIN_RECT_PX)
+        if h.startswith("n"):
+            y1 = min(y, y2 - MIN_RECT_PX)
+        elif h.startswith("s"):
+            y2 = max(y, y1 + MIN_RECT_PX)
+
+        task.geometry = (int(x1), int(y1), int(x2), int(y2))
+
+    def nudge_selected(self, dx, dy):
+        """Przesunięcie zaznaczenia strzałkami — Shift przyspiesza."""
+        task = self.selected_task
+        if task is None or task not in self.tasks:
+            return
+        if task.page is not self.current_page:
+            self.go_to_page(task.page)
+        self.push_geom_undo(task, collapse=True)
+        self.drag_origin = task.geometry
+        self.apply_move(dx, dy)
+        self.drag_origin = None
+        self.draw_task_overlays()
+        self.refresh_task_tree()
+        self.refresh_preview()
+        self.set_status(f"Zadanie {self.tasks.index(task) + 1}: "
+                        f"pozycja {task.x1}, {task.y1}")
+        return "break"
+
+    def push_geom_undo(self, task, collapse=False):
+        """Zapamiętuje geometrię przed zmianą. `collapse` łączy serię drobnych
+        korekt (strzałki) w jeden krok cofania."""
+        if collapse and self.undo_stack:
+            last = self.undo_stack[-1]
+            if last[0] == "geom" and last[1] is task:
+                return
+        self.undo_stack.append(("geom", task, task.geometry))
+
     # --- Mysz ---
 
     def on_mouse_down(self, event):
         if self.current_page is None:
             return
         self.canvas.focus_set()
-        self.drag_start = self.clamp_to_page(*self.to_image_coords(event))
+        raw = self.to_image_coords(event)
         self.dragging = True
+        self.drag_anchor = raw
+
+        handle = self.handle_at(event)
+        if handle is not None:
+            self.drag_mode = "resize"
+            self.drag_handle = handle
+            self.drag_origin = self.selected_task.geometry
+        elif (self.selected_task is not None
+              and self.selected_task in self.tasks
+              and self.selected_task.page is self.current_page
+              and self.selected_task.contains(*raw)):
+            self.drag_mode = "move"
+            self.drag_origin = self.selected_task.geometry
+        else:
+            self.drag_mode = "new"
+            self.drag_start = self.clamp_to_page(*raw)
 
     def on_mouse_move(self, event):
         if not self.dragging or self.current_page is None:
             return
-        x, y = self.clamp_to_page(*self.to_image_coords(event))
+        x, y = self.to_image_coords(event)
+
+        if self.drag_mode == "move":
+            self.apply_move(x - self.drag_anchor[0], y - self.drag_anchor[1])
+            self.draw_task_overlays()
+            t = self.selected_task
+            self.set_hint(f"Pozycja: {t.x1}, {t.y1}")
+            return
+
+        if self.drag_mode == "resize":
+            self.apply_resize(x, y)
+            self.draw_task_overlays()
+            t = self.selected_task
+            self.set_hint(f"Rozmiar: {t.width} × {t.height} px")
+            return
+
+        x, y = self.clamp_to_page(x, y)
         z = self.zoom
         self.canvas.delete("preview")
         self.canvas.create_rectangle(
@@ -676,7 +823,32 @@ class App:
         if not self.dragging or self.current_page is None:
             return
         self.dragging = False
+        mode, self.drag_mode = self.drag_mode, None
         self.canvas.delete("preview")
+
+        if mode in ("move", "resize"):
+            task = self.selected_task
+            # Domknięcie ruchu pozycją z puszczenia przycisku — przy szybkim
+            # przeciągnięciu ostatnie <Motion> potrafi nie dojść do końca.
+            x, y = self.to_image_coords(event)
+            if mode == "move":
+                self.apply_move(x - self.drag_anchor[0], y - self.drag_anchor[1])
+            else:
+                self.apply_resize(x, y)
+            origin, self.drag_origin = self.drag_origin, None
+            if task.geometry != origin:
+                self.undo_stack.append(("geom", task, origin))
+                self.refresh_task_tree()
+                self.refresh_preview()
+                n = self.tasks.index(task) + 1
+                self.set_status(
+                    f"Zadanie {n}: {'przesunięte' if mode == 'move' else 'zmieniony rozmiar'}"
+                    f" — {task.width} × {task.height} px w punkcie {task.x1}, {task.y1}")
+            self.draw_task_overlays()
+            self.set_hint("")
+            self.update_cursor(event)
+            return
+
         x, y = self.clamp_to_page(*self.to_image_coords(event))
         x0, y0 = self.drag_start
         self.drag_start = None
@@ -685,26 +857,49 @@ class App:
             # Za małe przeciągnięcie — traktujemy jak kliknięcie w istniejące zadanie
             self.select_task(self.task_at(x, y))
             self.set_hint("")
+            self.update_cursor(event)
             return
 
         task = Task(self.current_page, x0, y0, x, y)
         self.tasks.append(task)
-        self.undo_stack.append(task)
+        self.undo_stack.append(("add", task))
         self.select_task(task)
         self.refresh_all()
         self.set_status(f"Dodano zadanie {len(self.tasks)} ({task.width} × {task.height} px)")
         self.set_hint("")
+        self.update_cursor(event)
+
+    def update_cursor(self, event):
+        """Kursor podpowiada, co zrobi przeciągnięcie w tym miejscu."""
+        handle = self.handle_at(event)
+        if handle is not None:
+            cursor = HANDLE_CURSORS[handle]
+        elif (self.selected_task is not None
+              and self.selected_task in self.tasks
+              and self.selected_task.page is self.current_page
+              and self.selected_task.contains(*self.to_image_coords(event))):
+            cursor = "fleur"
+        else:
+            cursor = "crosshair"
+        if self.canvas.cget("cursor") != cursor:
+            self.canvas.config(cursor=cursor)
 
     def on_hover(self, event):
         if self.current_page is None or self.dragging:
             return
+        self.update_cursor(event)
         x, y = self.to_image_coords(event)
         iw, ih = self.current_page.pil.size
         if not (0 <= x <= iw and 0 <= y <= ih):
             self.set_hint("")
             return
+        if self.handle_at(event) is not None:
+            self.set_hint("Przeciągnij, aby zmienić rozmiar zadania")
+            return
         task = self.task_at(x, y)
-        if task is not None:
+        if task is self.selected_task and task is not None:
+            self.set_hint("Przeciągnij, aby przesunąć zadanie (strzałki: co 1 px)")
+        elif task is not None:
             self.set_hint(f"Zadanie {self.tasks.index(task) + 1} — kliknij, aby zaznaczyć")
         else:
             self.set_hint(f"x: {int(x)}, y: {int(y)}")
@@ -779,8 +974,7 @@ class App:
     def delete_task(self, task):
         if task in self.tasks:
             self.tasks.remove(task)
-        if task in self.undo_stack:
-            self.undo_stack.remove(task)
+        self.undo_stack = [op for op in self.undo_stack if op[1] is not task]
         if self.selected_task is task:
             self.selected_task = None
         self.refresh_all()
@@ -814,16 +1008,26 @@ class App:
         self.set_status("Wyczyszczono listę zadań.")
 
     def undo(self):
-        if not self.undo_stack:
-            self.set_status("Nie ma czego cofnąć.")
+        # Pomijamy wpisy dotyczące zadań, których już nie ma (skasowane ręcznie).
+        while self.undo_stack:
+            op = self.undo_stack.pop()
+            kind, task = op[0], op[1]
+            if task not in self.tasks:
+                continue
+            if kind == "add":
+                self.tasks.remove(task)
+                if self.selected_task is task:
+                    self.selected_task = None
+                self.refresh_all()
+                self.set_status("Cofnięto ostatnie zaznaczenie.")
+            else:
+                task.geometry = op[2]
+                self.select_task(task)
+                self.refresh_task_tree()
+                self.redraw()
+                self.set_status(f"Cofnięto zmianę zadania {self.tasks.index(task) + 1}.")
             return
-        task = self.undo_stack.pop()
-        if task in self.tasks:
-            self.tasks.remove(task)
-        if self.selected_task is task:
-            self.selected_task = None
-        self.refresh_all()
-        self.set_status("Cofnięto ostatnie zaznaczenie.")
+        self.set_status("Nie ma czego cofnąć.")
 
     # --- Odświeżanie widoków ---
 
