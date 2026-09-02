@@ -37,32 +37,37 @@ w menu Start, opcjonalny skrót na pulpicie i odinstalowanie przez
 "Aplikacje i funkcje". Nie wymaga uprawnień administratora (domyślnie instaluje
 się dla bieżącego użytkownika).
 
-Gotowy plik `MathListGenerator-<wersja>-setup.exe` znajduje się w zakładce
-[Releases](https://github.com/SzymonEls/math-list-generator-g/releases).
+### Jak zbudować instalator
 
-### Zbudowanie nowej wersji instalatora
+Instalator trzeba złożyć **na komputerze z Windowsem** - PyInstaller nie robi
+kompilacji skrośnej, więc `.exe` nie powstanie na macOS ani Linuksie.
 
-Najprościej przez GitHub Actions - instalator powstaje automatycznie po
-wypchnięciu taga:
+Jednorazowo, na tym komputerze:
 
-```
-git tag v1.0.0
-git push origin v1.0.0
-```
+1. [Python 3.9 lub nowszy](https://www.python.org/downloads/windows/) -
+   przy instalacji zaznacz **"Add python.exe to PATH"**.
+2. [Inno Setup 6](https://jrsoftware.org/isdl.php) (wersja 6.3 lub nowsza) -
+   instalacja domyślna, nic nie trzeba zmieniać.
 
-Plik trafia do artefaktów przebiegu i do release'u dla tego taga. Można też
-uruchomić workflow ręcznie z zakładki **Actions → Instalator Windows → Run workflow**.
-
-Lokalnie (na maszynie z Windowsem, Pythonem i [Inno Setup 6](https://jrsoftware.org/isdl.php)):
+Potem, w katalogu projektu, w PowerShellu:
 
 ```
 powershell -ExecutionPolicy Bypass -File installer\build_windows.ps1 -Version 1.0.0
 ```
 
-Wynik: `dist\installer\MathListGenerator-1.0.0-setup.exe`.
+Skrypt sam doinstaluje zależności i PyInstallera, zbuduje aplikację i złoży
+instalator. Wynik:
 
-Uwaga: instalatora nie da się zbudować na macOS ani Linuksie - PyInstaller nie
-robi kompilacji skrośnej, `.exe` musi powstać na Windowsie.
+```
+dist\installer\MathListGenerator-1.0.0-setup.exe
+```
+
+Kolejne buildy tej samej wersji można przyspieszyć flagą `-SkipDeps`
+(pomija instalację zależności).
+
+Uwaga: instalator nie jest podpisany certyfikatem, więc przy pierwszym
+uruchomieniu Windows pokaże ostrzeżenie SmartScreen - trzeba kliknąć
+"Więcej informacji" i "Uruchom mimo to".
 
 ## Uruchomienie
 
