@@ -77,7 +77,58 @@ python main.py
 
 ## Użycie
 
-1. **Wczytaj obraz** lub **Wczytaj PDF**.
-2. Myszką zaznacz prostokątami kolejne zadania (strzałki ← → przechodzą między stronami PDF).
-3. `Ctrl+Z` cofa ostatnie zaznaczenie.
-4. Wpisz tytuł (pojawi się na dole każdej strony) i kliknij **Zapisz PDF**.
+1. **Wczytaj obraz…** (można zaznaczyć kilka plików naraz) albo **Wczytaj PDF…**.
+   Wczytane pliki pojawią się na liście po lewej — przy każdej stronie widać,
+   ile zadań już na niej zaznaczono.
+2. Przeciągnij myszką prostokąt wokół zadania. Zaznaczenie dostaje numer,
+   trafia na listę **Zaznaczone zadania** i widać je w **Podglądzie**.
+3. Wpisz tytuł (pojawi się na dole każdej strony) i kliknij **Zapisz PDF…**.
+   Zadania trafią do PDF-u w kolejności z listy — po jednym na stronę.
+
+### Rozmiar zadania na stronie
+
+- **Naturalny (bez powiększania)** — domyślnie. Zadanie trafia na stronę
+  w rozmiarze wynikającym z rozdzielczości źródła, więc małe zadanie zostaje
+  małe, a reszta strony zostaje wolna na rozwiązanie. Wycinek, który nie
+  mieści się w marginesach, jest zmniejszany.
+- **Dopasuj do strony** — zadanie rozciągane na całą szerokość, także
+  powiększane. Przydatne przy słabo czytelnych skanach.
+
+Pod podglądem widać, ile milimetrów zajmie zadanie na papierze i jaki to
+procent wysokości strony.
+
+Rozdzielczość stron PDF jest znana dokładnie. Dla obrazów program czyta DPI
+z metadanych pliku, a gdy ich nie ma (albo są bezsensownie niskie), zakłada
+200 dpi — typowy skan. Jeśli zadania wychodzą za małe lub za duże, przełącz
+tryb na **Dopasuj do strony**.
+
+### Panel boczny
+
+- **Wczytane pliki** — co jest załadowane i ile zadań przypada na każdą stronę.
+  Kliknięcie strony przechodzi do niej. Prawy przycisk myszy na nazwie pliku
+  pozwala go zamknąć.
+- **Zaznaczone zadania** — pełna lista w kolejności, w jakiej trafią do PDF-u.
+  Kliknięcie przeskakuje do zadania na stronie, `↑` / `↓` zmieniają kolejność,
+  **Usuń** kasuje pojedyncze zadanie.
+- **Podgląd** — wycinek, który faktycznie trafi na stronę PDF-u.
+
+### Skróty klawiszowe
+
+| Skrót | Działanie |
+| --- | --- |
+| `Ctrl+O` / `Ctrl+P` | wczytaj obraz / PDF |
+| `Ctrl+S` | zapisz PDF |
+| `Ctrl+Z` | cofnij ostatnie zaznaczenie |
+| `Delete` | usuń zaznaczone zadanie |
+| `PgUp` / `PgDn` | poprzednia / następna strona |
+| `Ctrl` + kółko myszy | powiększanie |
+| `Ctrl+0` | dopasuj stronę do okna |
+| kółko myszy, `Shift` + kółko | przewijanie w pionie / poziomie |
+
+### Wskazówki
+
+- Kliknięcie w istniejący prostokąt zaznacza go (bez tworzenia nowego).
+- Prawy przycisk myszy na prostokącie pozwala go usunąć.
+- Strony PDF-u renderują się dopiero przy pierwszym wyświetleniu, więc nawet
+  duże pliki otwierają się od razu.
+- **Kratka** wyłącza szarą siatkę na stronach wynikowego PDF-u.
